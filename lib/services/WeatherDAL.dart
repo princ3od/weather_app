@@ -1,0 +1,216 @@
+import 'package:demo_login/models/Weather.dart';
+import 'package:demo_login/screens/home/homeViewModel.dart';
+import 'package:stacked/stacked.dart';
+import 'package:path/path.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+class WeatherDAL {
+  final String tableName = "weathers";
+  final String id = "id";
+  final String location = "location";
+  final String main = "main";
+  final String des = "des";
+  final String temp = "temp";
+  final String tempMax = "tempMax";
+  final String tempMin = "tempMin";
+  final String pressure = "pressure";
+  final String humidity = "humidity";
+  final String lastUpdated = "lastUpdated";
+  final String favorite = "favorite";
+
+  List<Weather> weatherList = [];
+  final database = FirebaseFirestore.instance;
+
+  Future<void> saveWeather(Weather weather) async {
+    await database.collection(tableName).doc(weather.id.toString()).set({
+      '$id': weather.id,
+      '$location': weather.location,
+      '$main': weather.main,
+      '$des': weather.des,
+      '$temp': weather.temp,
+      '$tempMax': weather.tempMax,
+      '$tempMin': weather.tempMin,
+      '$pressure': weather.pressure,
+      '$humidity': weather.humidity,
+      '$lastUpdated': weather.lastUpdated,
+      '$favorite': weather.favorite,
+    }, SetOptions(merge: true));
+  }
+
+  Future<Weather> getWeatherByLocation(String location) async {
+    await database
+        .collection(tableName)
+        .where(this.location, isEqualTo: location)
+        .get()
+        .then((value) {
+      if (value.docs.isNotEmpty) {
+        return getWeatherFromRaw(value.docs[0].data());
+      }
+    });
+    return null;
+  }
+
+  Future<List<Weather>> getWeathers() async {
+    List<Weather> weathers = [];
+    await database.collection(tableName).get().then((value) {
+      value.docs.forEach(
+          (element) => weathers.add(getWeatherFromRaw(element.data())));
+    });
+    return weathers;
+  }
+
+  void startListening() async {
+    database.collection(tableName).snapshots().listen((event) {
+      // if (HistoryViewModel.getInstance() != null)
+      //   HistoryViewModel.getInstance().updateWeather();
+    });
+  }
+
+  Future<List<Weather>> getWeathersFavorite() async {
+    List<Weather> weathers = [];
+    await database
+        .collection(tableName)
+        .where(this.favorite, isEqualTo: true)
+        .get()
+        .then((value) {
+      value.docs.forEach(
+          (element) => weathers.add(getWeatherFromRaw(element.data())));
+    });
+    return weathers;
+  }
+
+  Future<void> removeWeather(Weather weather) async {
+    await database.collection(tableName).doc(weather.id.toString()).delete();
+  }
+
+  Weather getWeatherFromRaw(Map<String, dynamic> result) {
+    return Weather(
+      result[id],
+      result[this.location],
+      result[main],
+      result[des],
+      result[temp],
+      result[pressure],
+      result[humidity],
+      result[tempMin],
+      result[tempMax],
+      result[lastUpdated],
+      result[favorite],
+    );
+  }
+}
+
+class WeatherDao {
+  final String tableName = "weather";
+  final String id = "id";
+  final String location = "location";
+  final String main = "main";
+  final String des = "des";
+  final String temp = "temp";
+  final String tempMax = "temp_max";
+  final String tempMin = "temp_min";
+  final String pressure = "pressure";
+  final String humidity = "humidity";
+  final String lastUpdated = "last_updated";
+  final String favorite = "favorite";
+
+  Database database;
+
+  Future<Database> open() async {
+    if (database == null) {
+      var databasePath = await getDatabasesPath();
+      String path = join(databasePath, 'weathers.db');
+
+      database = await openDatabase(path, version: 1,
+          onCreate: (Database db, int version) async {
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS $tableName ($id INTEGER PRIMARY KEY, "
+            "$location TEXT, $main TEXT, $des TEXT, $temp REAL, $tempMax REAL,"
+            "$tempMin REAL, $pressure REAL, $humidity REAL,"
+            " $lastUpdated INTEGER, $favorite INTEGER);");
+      });
+    }
+    return database;
+  }
+
+  Future<int> saveWeather(Weather weather) async {
+    Database db = await open();
+
+    var map = Map<String, dynamic>();
+    map[id] = weather.id;
+    map[location] = weather.location;
+    map[main] = weather.main;
+    map[des] = weather.des;
+    map[temp] = weather.temp;
+    map[tempMax] = weather.tempMax;
+    map[tempMin] = weather.tempMin;
+    map[pressure] = weather.pressure;
+    map[humidity] = weather.humidity;
+    map[lastUpdated] = weather.lastUpdated;
+    map[favorite] = weather.favorite ? 1 : 0;
+
+    var result = await db.insert(tableName, map,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+    return result;
+  }
+
+  Future<Weather> getWeatherByLocation(String location) async {
+    Database db = await open();
+
+    List<Map<String, dynamic>> results = await db.query(tableName,
+        where: "${this.location} LIKE '$location'", limit: 1);
+    if (results == null || results.length == 0) {
+      return null;
+    } else {
+      var result = results[0];
+      return getWeatherFromRaw(result);
+    }
+  }
+
+  Future<List<Weather>> getWeathers() async {
+    Database db = await open();
+
+    List<Map<String, dynamic>> results =
+        await db.query(tableName, orderBy: "$lastUpdated DESC");
+    List<Weather> weathers = [];
+    for (Map<String, dynamic> result in results) {
+      weathers.add(getWeatherFromRaw(result));
+    }
+    return weathers;
+  }
+
+  Future<List<Weather>> getWeathersFavorite() async {
+    Database db = await open();
+    List<Map<String, dynamic>> results =
+        await db.query(tableName, where: "$favorite = 1");
+    List<Weather> weathers = [];
+    for (Map<String, dynamic> result in results) {
+      weathers.add(getWeatherFromRaw(result));
+    }
+    return weathers;
+  }
+
+  Future<int> removeWeather(Weather weather) async {
+    Database database = await open();
+    int result = await database
+        .rawDelete("DELETE FROM $tableName WHERE $id = ${weather.id};");
+    return result;
+  }
+
+  Weather getWeatherFromRaw(Map<String, dynamic> result) {
+    return Weather(
+      result[id],
+      result[this.location],
+      result[main],
+      result[des],
+      result[temp],
+      result[pressure],
+      result[humidity],
+      result[tempMin],
+      result[tempMax],
+      result[lastUpdated],
+      (result[favorite] == 1),
+    );
+  }
+}
